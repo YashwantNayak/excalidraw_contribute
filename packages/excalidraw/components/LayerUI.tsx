@@ -61,6 +61,7 @@ import { Island } from "./Island";
 import { JSONExportDialog } from "./JSONExportDialog";
 import { LaserPointerButton } from "./LaserPointerButton";
 import { Toast } from "./Toast";
+import { isEraserActive } from "../appState";
 
 import "./LayerUI.scss";
 import "./Toolbar.scss";
@@ -87,6 +88,8 @@ interface LayerUIProps {
   onLockToggle: () => void;
   onHandToolToggle: () => void;
   onPenModeToggle: AppClassProperties["togglePenMode"];
+  onEraserModeChange?: (mode: AppState["eraserMode"]) => void;
+  onEraserSizeChange?: (size: number) => void;
   showExitZenModeBtn: boolean;
   langCode: Language["code"];
   renderTopLeftUI?: ExcalidrawProps["renderTopLeftUI"];
@@ -147,6 +150,8 @@ const LayerUI = ({
   onLockToggle,
   onHandToolToggle,
   onPenModeToggle,
+  onEraserModeChange,
+  onEraserSizeChange,
   showExitZenModeBtn,
   renderTopLeftUI,
   renderTopRightUI,
@@ -356,6 +361,38 @@ const LayerUI = ({
                               title={t("toolBar.lock")}
                             />
 
+                            {isEraserActive(appState) && onEraserModeChange && (
+                              <>
+                                <div className="App-toolbar__divider" />
+                                <div className="eraser-mode-buttons">
+                                  <button
+                                    className={clsx("eraser-mode-btn", {
+                                      active: appState.eraserMode === "element",
+                                    })}
+                                    onClick={() =>
+                                      onEraserModeChange("element")
+                                    }
+                                    title="Erase entire element"
+                                    aria-label="Erase element mode"
+                                  >
+                                    ◯
+                                  </button>
+                                  <button
+                                    className={clsx("eraser-mode-btn", {
+                                      active: appState.eraserMode === "partial",
+                                    })}
+                                    onClick={() =>
+                                      onEraserModeChange("partial")
+                                    }
+                                    title="Partial eraser - erase only touched strokes"
+                                    aria-label="Partial eraser mode"
+                                  >
+                                    ◐
+                                  </button>
+                                </div>
+                              </>
+                            )}
+
                             <div className="App-toolbar__divider" />
 
                             <ShapesSwitcher
@@ -392,6 +429,56 @@ const LayerUI = ({
                 )}
               </Section>
             )}
+            {isEraserActive(appState) &&
+              appState.eraserMode === "partial" &&
+              onEraserSizeChange && (
+                <Island
+                  padding={spacing.islandPadding}
+                  className="eraser-size-slider-container"
+                  style={{
+                    position: "fixed",
+                    left: "1rem",
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    zIndex: 100,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: "0.5rem",
+                    width: "auto",
+                    minWidth: "50px",
+                  }}
+                >
+                  <label
+                    style={{
+                      fontSize: "0.75rem",
+                      fontWeight: "500",
+                      textAlign: "center",
+                    }}
+                  >
+                    Size
+                  </label>
+                  <input
+                    type="range"
+                    min="8"
+                    max="96"
+                    value={appState.eraserSize}
+                    onChange={(e) =>
+                      onEraserSizeChange(Number(e.target.value))
+                    }
+                    style={{
+                      width: "30px",
+                      height: "150px",
+                    }}
+                    className="eraser-size-slider"
+                    title={`Eraser size: ${appState.eraserSize}px`}
+                    aria-label="Eraser size"
+                  />
+                  <span style={{ fontSize: "0.65rem" }}>
+                    {appState.eraserSize}
+                  </span>
+                </Island>
+              )}
           <div
             className={clsx(
               "layer-ui__wrapper__top-right zen-mode-transition",

@@ -39,13 +39,17 @@ let previewDataURL: string;
 export const setEraserCursor = (
   interactiveCanvas: HTMLCanvasElement | null,
   theme: AppState["theme"],
+  eraserSize: number,
 ) => {
-  const cursorImageSizePx = 20;
+  const clampedEraserSize = Math.max(4, Math.min(80, eraserSize));
+  const cursorImageSizePx = Math.max(20, clampedEraserSize + 8);
+  const cursorRadiusPx = clampedEraserSize / 2;
 
   const drawCanvas = () => {
     const isDarkTheme = theme === THEME.DARK;
     eraserCanvasCache = document.createElement("canvas");
     eraserCanvasCache.theme = theme;
+    eraserCanvasCache.size = clampedEraserSize;
     eraserCanvasCache.height = cursorImageSizePx;
     eraserCanvasCache.width = cursorImageSizePx;
     const context = eraserCanvasCache.getContext("2d")!;
@@ -54,7 +58,7 @@ export const setEraserCursor = (
     context.arc(
       eraserCanvasCache.width / 2,
       eraserCanvasCache.height / 2,
-      5,
+      cursorRadiusPx,
       0,
       2 * Math.PI,
     );
@@ -64,7 +68,11 @@ export const setEraserCursor = (
     context.stroke();
     previewDataURL = eraserCanvasCache.toDataURL(MIME_TYPES.svg) as DataURL;
   };
-  if (!eraserCanvasCache || eraserCanvasCache.theme !== theme) {
+  if (
+    !eraserCanvasCache ||
+    eraserCanvasCache.theme !== theme ||
+    eraserCanvasCache.size !== clampedEraserSize
+  ) {
     drawCanvas();
   }
 
@@ -78,7 +86,7 @@ export const setEraserCursor = (
 
 export const setCursorForShape = (
   interactiveCanvas: HTMLCanvasElement | null,
-  appState: Pick<AppState, "activeTool" | "theme">,
+  appState: Pick<AppState, "activeTool" | "theme" | "eraserSize">,
 ) => {
   if (!interactiveCanvas) {
     return;
@@ -88,7 +96,7 @@ export const setCursorForShape = (
   } else if (isHandToolActive(appState)) {
     interactiveCanvas.style.cursor = CURSOR_TYPE.GRAB;
   } else if (isEraserActive(appState)) {
-    setEraserCursor(interactiveCanvas, appState.theme);
+    setEraserCursor(interactiveCanvas, appState.theme, appState.eraserSize);
     // do nothing if image tool is selected which suggests there's
     // a image-preview set as the cursor
     // Ignore custom type as well and let host decide

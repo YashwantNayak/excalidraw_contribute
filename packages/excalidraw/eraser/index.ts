@@ -75,6 +75,14 @@ export class EraserTrail extends AnimatedTrail {
     this.elementsToErase.clear();
   }
 
+  getCurrentPathPoints(): GlobalPoint[] {
+    return (
+      super
+        .getCurrentTrail()
+        ?.originalPoints?.map((p) => pointFrom<GlobalPoint>(p[0], p[1])) || []
+    );
+  }
+
   addPointToPath(x: number, y: number, restore = false) {
     super.addPointToPath(x, y);
 

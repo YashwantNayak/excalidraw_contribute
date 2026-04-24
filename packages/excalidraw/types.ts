@@ -270,6 +270,7 @@ export type ObservedElementsAppState = {
 };
 
 export type BoxSelectionMode = "contain" | "overlap";
+export type EraserMode = "element" | "partial";
 
 export interface AppState {
   contextMenu: {
@@ -347,6 +348,8 @@ export interface AppState {
     type: "selection" | "lasso";
     initialized: boolean;
   };
+  eraserMode: EraserMode;
+  eraserSize: number;
   penMode: boolean;
   penDetected: boolean;
   exportBackground: boolean;

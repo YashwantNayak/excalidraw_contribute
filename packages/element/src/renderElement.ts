@@ -131,6 +131,99 @@ export const getRenderOpacity = (
   return opacity;
 };
 
+type PartialEraserStroke = {
+  size: number;
+  points: readonly [number, number][];
+};
+
+type PartialEraserData = {
+  v: number;
+  strokes: readonly PartialEraserStroke[];
+};
+
+const getPartialEraserData = (
+  element: ExcalidrawElement,
+): PartialEraserData | null => {
+  const maybeData = element.customData?.partialEraser as
+    | PartialEraserData
+    | undefined;
+
+  if (!maybeData || maybeData.v !== 1 || !Array.isArray(maybeData.strokes)) {
+    return null;
+  }
+
+  return maybeData;
+};
+
+const applyPartialEraserMask = (
+  context: CanvasRenderingContext2D,
+  element: ExcalidrawElement,
+  appState: StaticCanvasAppState | InteractiveCanvasAppState,
+  elementsMap: RenderableElementsMap,
+) => {
+  const partialData = getPartialEraserData(element);
+  if (!partialData?.strokes?.length) {
+    return;
+  }
+
+  console.log(`🟡 Applying eraser mask: ${partialData.strokes.length} strokes`);
+
+  // ✅ Direct approach: Apply mask strokes directly on main canvas
+  // Strokes are stored in element-local coordinates
+  context.save();
+  context.globalCompositeOperation = "destination-out";
+  context.lineJoin = "round";
+  context.lineCap = "round";
+
+  for (const stroke of partialData.strokes) {
+    if (!stroke.points?.length) {
+      continue;
+    }
+
+    const { size, points } = stroke;
+    const softEdge = Math.max(4, size * 0.3);
+
+    // Convert local coordinates to world/screen coordinates
+    // points are relative to element.x, element.y
+    // We need to add element position + scroll to get screen coords
+    const worldX = element.x + appState.scrollX;
+    const worldY = element.y + appState.scrollY;
+
+    // ✅ Soft outer layer (reduced opacity = feathered edge)
+    context.save();
+    context.globalAlpha = 0.4;
+    context.lineWidth = size + softEdge;
+    context.strokeStyle = "#000000";
+    context.fillStyle = "#000000";
+    context.beginPath();
+    context.moveTo(points[0][0] + worldX, points[0][1] + worldY);
+    for (let i = 1; i < points.length; i++) {
+      context.lineTo(points[i][0] + worldX, points[i][1] + worldY);
+    }
+    context.stroke();
+    context.restore();
+
+    // ✅ Hard center (full opacity = clean erase)
+    context.save();
+    context.globalAlpha = 1.0;
+    context.lineWidth = size;
+    context.strokeStyle = "#000000";
+    context.fillStyle = "#000000";
+    context.beginPath();
+    context.moveTo(points[0][0] + worldX, points[0][1] + worldY);
+    for (let i = 1; i < points.length; i++) {
+      context.lineTo(points[i][0] + worldX, points[i][1] + worldY);
+    }
+    context.stroke();
+    context.restore();
+  }
+
+  context.globalCompositeOperation = "source-over";
+  context.restore();
+
+  console.log("🟢 Eraser mask applied successfully");
+};
+
 export interface ExcalidrawElementWithCanvas {
   element: ExcalidrawElement | ExcalidrawTextElement;
   canvas: HTMLCanvasElement;
@@ -786,6 +879,10 @@ export const renderElement = (
   renderConfig: StaticCanvasRenderConfig,
   appState: StaticCanvasAppState | InteractiveCanvasAppState,
 ) => {
+  const partialData = getPartialEraserData(element);
+  if (partialData?.strokes?.length) {
+    console.log(`🔵 renderElement called for ${element.type} ${element.id} with ${partialData.strokes.length} eraser strokes`);
+  }
   const reduceAlphaForSelection =
     appState.openDialog?.name === "elementLinkSelector" &&
     !appState.selectedElementIds[element.id] &&
@@ -1066,6 +1163,10 @@ export const renderElement = (
       // @ts-ignore
       throw new Error(`Unimplemented type ${element.type}`);
     }
+  }
+
+  if (element.type !== "frame" && element.type !== "magicframe") {
+    applyPartialEraserMask(context, element, appState, elementsMap);
   }
 
   context.globalAlpha = 1;

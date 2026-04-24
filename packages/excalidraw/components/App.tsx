@@ -517,6 +517,10 @@ const EditorInterfaceContext = React.createContext<EditorInterface>(
 );
 EditorInterfaceContext.displayName = "EditorInterfaceContext";
 
+const MIN_ERASER_SIZE = 8;
+const MAX_ERASER_SIZE = 96;
+const PARTIAL_ERASER_MAX_STROKES = 300;
+
 const editorLifecycleEventBehavior = {
   "editor:mount": { cardinality: "once", replay: "last" },
   "editor:initialize": { cardinality: "once", replay: "last" },
@@ -2153,6 +2157,8 @@ class App extends React.Component<AppProps, AppState> {
                             elements={this.scene.getNonDeletedElements()}
                             onLockToggle={this.toggleLock}
                             onPenModeToggle={this.togglePenMode}
+                            onEraserModeChange={this.setEraserMode}
+                            onEraserSizeChange={this.setEraserSize}
                             onHandToolToggle={this.onHandToolToggle}
                             langCode={getLanguage().code}
                             renderTopLeftUI={renderTopLeftUI}
@@ -3435,7 +3441,11 @@ class App extends React.Component<AppProps, AppState> {
       this.state.activeTool.type === "eraser" &&
       prevState.theme !== this.state.theme
     ) {
-      setEraserCursor(this.interactiveCanvas, this.state.theme);
+      setEraserCursor(
+        this.interactiveCanvas,
+        this.state.theme,
+        this.state.eraserSize,
+      );
     }
 
     // Hide hyperlink popup if shown when element type is not selection
@@ -4273,6 +4283,23 @@ class App extends React.Component<AppProps, AppState> {
 
   onHandToolToggle = () => {
     this.actionManager.executeAction(actionToggleHandTool);
+  };
+
+  setEraserMode = (eraserMode: AppState["eraserMode"]) => {
+    this.setState({ eraserMode });
+  };
+
+  setEraserSize = (eraserSize: number) => {
+    const clampedSize = Math.max(8, Math.min(96, eraserSize));
+    this.setState({ eraserSize: clampedSize }, () => {
+      if (isEraserActive(this.state)) {
+        setEraserCursor(
+          this.interactiveCanvas,
+          this.state.theme,
+          this.state.eraserSize,
+        );
+      }
+    });
   };
 
   /**
@@ -11035,6 +11062,7 @@ class App extends React.Component<AppProps, AppState> {
       const pointerEnd = this.lastPointerUpEvent || this.lastPointerMoveEvent;
 
       if (isEraserActive(this.state) && pointerStart && pointerEnd) {
+        const eraserPathPoints = this.eraserTrail.getCurrentPathPoints();
         this.eraserTrail.endPath();
 
         const draggedDistance = pointDistance(
@@ -11058,7 +11086,12 @@ class App extends React.Component<AppProps, AppState> {
             this.elementsPendingErasure.add(hitElement.id),
           );
         }
-        this.eraseElements();
+
+        if (this.state.eraserMode === "partial") {
+          this.partialEraseElements(eraserPathPoints);
+        } else {
+          this.eraseElements();
+        }
         return;
       } else if (this.elementsPendingErasure.size) {
         this.restoreReadyToEraseElements();
@@ -11379,6 +11412,119 @@ class App extends React.Component<AppProps, AppState> {
   private restoreReadyToEraseElements = () => {
     this.elementsPendingErasure = new Set();
     this.triggerRender();
+  };
+
+  private getSimplifiedEraserPath = (points: readonly GlobalPoint[]) => {
+    if (!points.length) {
+      return [] as [number, number][];
+    }
+
+    const simplified: [number, number][] = [[points[0][0], points[0][1]]];
+    const minDistance = Math.max(1, this.state.eraserSize / 6);
+
+    for (let i = 1; i < points.length; i++) {
+      const candidate = points[i];
+      const last = simplified[simplified.length - 1]!;
+
+      const dx = candidate[0] - last[0];
+      const dy = candidate[1] - last[1];
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist >= minDistance) {
+        // Interpolate points between last and candidate for smooth strokes
+        const steps = Math.ceil(dist / (minDistance / 2));
+        for (let step = 1; step < steps; step++) {
+          const t = step / steps;
+          simplified.push([
+            Math.round(last[0] + dx * t),
+            Math.round(last[1] + dy * t),
+          ]);
+        }
+        simplified.push([candidate[0], candidate[1]]);
+      }
+    }
+
+    if (simplified.length === 1 && points.length > 1) {
+      const lastPoint = points[points.length - 1]!;
+      simplified.push([lastPoint[0], lastPoint[1]]);
+    }
+
+    return simplified;
+  };
+
+  private partialEraseElements = (pathPoints: readonly GlobalPoint[]) => {
+    console.log("🔴 partialEraseElements called with", pathPoints.length, "points, eraserSize:", this.state.eraserSize, "pendingElements:", this.elementsPendingErasure.size);
+    const simplifiedPath = this.getSimplifiedEraserPath(pathPoints);
+    if (!simplifiedPath.length || this.elementsPendingErasure.size === 0) {
+      this.restoreReadyToEraseElements();
+      return;
+    }
+
+    let didChange = false;
+
+    const elements = this.scene.getElementsIncludingDeleted().map((element) => {
+      if (
+        element.isDeleted ||
+        element.type === "frame" ||
+        element.type === "magicframe" ||
+        !this.elementsPendingErasure.has(element.id)
+      ) {
+        return element;
+      }
+
+      const localPoints = simplifiedPath.map(
+        ([x, y]) => [x - element.x, y - element.y] as [number, number],
+      );
+
+      if (!localPoints.length) {
+        return element;
+      }
+
+      const currentPartialEraser = element.customData?.partialEraser as
+        | {
+            v?: number;
+            strokes?: Array<{ size: number; points: [number, number][] }>;
+          }
+        | undefined;
+
+      const existingStrokes = Array.isArray(currentPartialEraser?.strokes)
+        ? currentPartialEraser.strokes
+        : [];
+
+      const nextStrokes = [
+        ...existingStrokes,
+        {
+          size: this.state.eraserSize,
+          points: localPoints,
+        },
+      ].slice(-300);
+
+      console.log(`🟠 Saving stroke to element ${element.id}:`, {
+        totalStrokes: nextStrokes.length,
+        lastStrokePoints: localPoints.length,
+        eraserSize: this.state.eraserSize,
+      });
+
+      didChange = true;
+      return newElementWith(element, {
+        customData: {
+          ...(element.customData || {}),
+          partialEraser: {
+            v: 1,
+            strokes: nextStrokes,
+          },
+        },
+      });
+    });
+
+    this.elementsPendingErasure = new Set();
+
+    if (didChange) {
+      this.store.scheduleCapture();
+      this.scene.replaceAllElements(elements);
+    } else {
+      this.triggerRender();
+    }
   };
 
   private eraseElements = () => {
